@@ -68,6 +68,11 @@ npx vercel --prod
 
 或連接 Git 倉庫由 Vercel 自動部署。
 
+> **`tsconfig.json` 的 `rewriteRelativeImportExtensions` 不可移除。**
+> 原始碼以 `.ts` 副檔名互相匯入，而 Vercel 建置時會把檔案改名為 `.js`。
+> 該選項讓建置產物同步把匯入改寫為 `.js`；移除後部署會成功，但執行時
+> 拋出 `ERR_MODULE_NOT_FOUND`（找不到 `handler.ts`）。
+
 ### 3. 設定環境變數
 
 在 Vercel 專案設定 → Environment Variables 加入：
