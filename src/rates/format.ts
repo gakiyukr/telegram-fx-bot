@@ -163,7 +163,7 @@ export function buildFeeRateReport(params: {
   lines.push(`實際扣款 <b>${formatAmount(actualCharged, to)} ${to}</b>`);
   lines.push('');
   lines.push('────────────────');
-  lines.push(`<b>反推 FTF 手续费 ${effectiveFeePercent.toFixed(2)}%</b>`);
+  lines.push(`<b>反推 FTF 手續費 ${effectiveFeePercent.toFixed(2)}%</b>`);
   lines.push('');
   lines.push(`📅 交易日期 <code>${escapeHtml(requestedDate)}</code>`);
   lines.push(`🏦 ${currencyLabel(from)} → ${currencyLabel(to)}`);

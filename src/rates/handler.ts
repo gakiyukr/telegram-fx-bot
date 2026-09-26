@@ -56,20 +56,11 @@ async function handleFeeRateCalculation(
   parsed: ParsedArgs
 ): Promise<string> {
   // 語法：/${command} 消費幣 扣費幣 --fee-rate 消費金額 實際扣款
-  if (!parsed.amount || parsed.amount <= 0) {
-    throw new Error('FTF 反推需指定消費金額\n用法：/${command} 消費幣 扣費幣 --fee-rate 消費金額 實際扣款');
-  }
-
   const from = parsed.from!;
   const to = parsed.to!;
-  const spendAmount = parsed.amount;
-  
-  // 第二個數字應該是實際扣款金額（原來的 fee 欄位）
-  const actualCharged = parsed.fee !== undefined ? parsed.fee : undefined;
-  
-  if (actualCharged === undefined || actualCharged <= 0) {
-    throw new Error('FTF 反推需指定實際扣款金額\n用法：/${command} 消費幣 扣費幣 --fee-rate 消費金額 實際扣款');
-  }
+  const spendAmount = parsed.amount!;
+  // 反推模式下 fee 欄位承載「實際扣款金額」（parseArgs 已保證存在且 > 0）
+  const actualCharged = parsed.fee!;
 
   const dateResult = resolveDateKey(parsed.dateKey, COMMANDS[command].label);
   if ('error' in dateResult) {
@@ -77,28 +68,27 @@ async function handleFeeRateCalculation(
   }
   const { dateKey } = dateResult;
 
-  // 查詢純匯率（不含 FTF）
-  const pureQuote = await fetchVisaRate({ from, to, dateKey });
+  // 反推必須以純匯率為基準：
+  //   Visa 端點本身只回純匯率；Mastercard 則帶 bank_fee=0 查詢
+  const pureQuote =
+    network === 'visa'
+      ? await fetchVisaRate({ from, to, dateKey })
+      : await fetchMastercardRate({ from, to, dateKey, fee: 0 });
 
-  // 理論上應得的目標幣別金額（僅卡組織匯率，無 FTF）
   const expectedWithoutFee = spendAmount * pureQuote.rate;
-
-  // 實際被扣的金額
-  const actual = actualCharged;
-
-  // FTF 計算方式：
-  // actual = expected * (1 + fee/100)
-  // fee = (actual / expected - 1) * 100
-  let effectiveFeePercent: number;
-  
-  if (Math.abs(expectedWithoutFee) < 0.001) {
-    throw new Error('無法計算 FTF: 匯率或金額異常');
+  if (expectedWithoutFee <= 0) {
+    throw new Error('無法計算 FTF：匯率或金額異常');
   }
 
-  effectiveFeePercent = ((actual / expectedWithoutFee) - 1) * 100;
+  // actual = expected * (1 + fee/100) → fee = (actual / expected - 1) * 100
+  const effectiveFeePercent = (actualCharged / expectedWithoutFee - 1) * 100;
 
-  if (effectiveFeePercent < 0) {
-    throw new Error(`實際扣款 (${actual.toFixed(2)} ${to}) 少於卡組織換算金額 (${expectedWithoutFee.toFixed(2)} ${to})，無效數據`);
+  // 浮點誤差可能讓等值輸入得到 -1e-15 這類極小負值，需視為 0 而非錯誤
+  if (effectiveFeePercent < -1e-6) {
+    throw new Error(
+      `實際扣款 (${actualCharged.toFixed(2)} ${to}) 少於卡組織換算金額 ` +
+      `(${expectedWithoutFee.toFixed(2)} ${to})，無法反推手續費`
+    );
   }
 
   return buildFeeRateReport({
@@ -106,14 +96,14 @@ async function handleFeeRateCalculation(
     to,
     spendAmount,
     expectedWithoutFee,
-    actualCharged: actual,
-    effectiveFeePercent,
+    actualCharged,
+    effectiveFeePercent: Math.max(0, effectiveFeePercent),
     requestedDate: dateKey,
     command: buildCommandLine(command, {
       from,
       to,
       amount: spendAmount,
-      fee: actual,
+      fee: actualCharged,
       dateKey: parsed.dateKey ? dateKey : undefined,
     }),
   });
