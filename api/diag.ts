@@ -1,50 +1,71 @@
 /**
  * 一次性診斷端點（驗證後即刪除）。
  *
- * 在 Vercel 執行環境中直接呼叫 handleCommand，
- * 驗證環境變數與命令處理是否正常。不回傳任何 token 內容。
+ * 在 Vercel 執行環境重現完整 webhook 處理流程的每一步，
+ * 回報各步結果與錯誤，定位「正在輸入但無回覆」的斷點。
+ * 不回傳任何 token 內容。
  */
-import { getMe } from '../src/telegram.ts';
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { getMe, sendChatAction, sendMessage } from '../src/telegram.ts';
 import { handleCommand } from '../src/rates/handler.ts';
 
-function allowedChatIds(): Set<string> | null {
-  const raw = process.env.ALLOWED_CHAT_IDS?.trim();
-  if (!raw) return null;
-  const ids = raw.split(/[\s,]+/).filter(Boolean);
-  return ids.length > 0 ? new Set(ids) : null;
-}
+const CHAT_ID = 1111558803;
 
-export default async function handler(request, response) {
+type StepResult = { ok: boolean; error?: string; detail?: string | number | null };
+
+export default async function handler(
+  request: VercelRequest,
+  response: VercelResponse
+): Promise<void> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
+  const steps: Record<string, StepResult> = {};
 
-  const result = {
-    tokenPresent: Boolean(token),
-    tokenLength: token ? token.length : 0,
-    tokenPrefixMatchesBotId: token ? token.startsWith('8971930089:') : false,
-    secretPresent: Boolean(process.env.TELEGRAM_WEBHOOK_SECRET),
-    allowedChatIdsRaw: process.env.ALLOWED_CHAT_IDS ?? '(unset)',
-    allowedChatIdsParsed: allowedChatIds() ? [...allowedChatIds()!] : null,
-    getMeOk: false,
-    botUsername: null,
-    handleCommandHelp: null,
-    handleCommandError: null,
-  };
+  if (!token) {
+    response.status(200).json({ tokenPresent: false });
+    return;
+  }
 
-  if (token) {
+  // 步驟 1：getMe（token 有效性）
+  try {
+    const me = await getMe(token);
+    steps.getMe = { ok: true, detail: me.username ?? null };
+  } catch (error) {
+    steps.getMe = { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+
+  // 步驟 2：handleCommand /visa help
+  let reply: string | null = null;
+  try {
+    reply = await handleCommand('visa', ['help']);
+    steps.handleCommand = { ok: Boolean(reply), detail: reply?.length ?? 0 };
+  } catch (error) {
+    steps.handleCommand = { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+
+  // 步驟 3：sendChatAction
+  try {
+    await sendChatAction(token, CHAT_ID);
+    steps.sendChatAction = { ok: true };
+  } catch (error) {
+    steps.sendChatAction = { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+
+  // 步驟 4：sendMessage（與 webhook.ts 完全相同的呼叫方式）
+  if (reply) {
     try {
-      const me = await getMe(token);
-      result.getMeOk = true;
-      result.botUsername = me.username ?? null;
+      await sendMessage(token, {
+        chatId: CHAT_ID,
+        text: reply,
+        replyToMessageId: 8,
+      });
+      steps.sendMessage = { ok: true };
     } catch (error) {
-      result.getMeError = error instanceof Error ? error.message : String(error);
+      steps.sendMessage = {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
   }
 
-  try {
-    result.handleCommandHelp = (await handleCommand('visa', ['help']))?.slice(0, 120) ?? null;
-  } catch (error) {
-    result.handleCommandError = error instanceof Error ? error.message : String(error);
-  }
-
-  response.status(200).json(result);
+  response.status(200).json(steps);
 }
