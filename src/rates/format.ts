@@ -7,7 +7,7 @@
  * 使用 Telegram HTML parse mode，所有動態文字皆經 escapeHtml 處理。
  */
 
-import { currencyLabel, CURRENCY_NAMES } from './currencies.ts';
+import { CURRENCY_NAMES } from './currencies.ts';
 import type { RateQuote } from './types.ts';
 
 /** 金額顯示為整數的幣別（ISO 4217 小數位為 0） */
@@ -80,11 +80,10 @@ export function buildRateReport(params: {
   quote: RateQuote;
   amount: number;
   feePercent: number;
-  requestedDate: string;
   amountSpecified: boolean;
   command: string;
 }): string {
-  const { quote, amount, feePercent, requestedDate, amountSpecified, command } = params;
+  const { quote, amount, feePercent, amountSpecified, command } = params;
   const label = networkName(quote.network);
 
   const lines: string[] = [];
@@ -113,30 +112,7 @@ export function buildRateReport(params: {
         `實際扣款 <b>${formatAmount(converted + feeAmount, quote.to)} ${quote.to}</b>`
       );
     }
-
-    lines.push('');
-    lines.push(`匯率 <code>1 ${quote.from} = ${formatRate(quote.rate)} ${quote.to}</code>`);
-    lines.push(
-      `反向 <code>1 ${quote.to} = ${formatRate(1 / quote.rate)} ${quote.from}</code>`
-    );
-    if (feePercent > 0) {
-      lines.push(
-        `含手續費 <code>1 ${quote.from} = ${formatRate(
-          quote.rate * (1 + feePercent / 100)
-        )} ${quote.to}</code>`
-      );
-    }
   }
-
-  lines.push('');
-  lines.push(
-    `📅 交易日期 <code>${escapeHtml(requestedDate)}</code> ｜ 匯率日期 <code>${escapeHtml(quote.fxDate)}</code>`
-  );
-  lines.push(`🏦 ${currencyLabel(quote.from)} → ${currencyLabel(quote.to)}`);
-  lines.push('');
-  lines.push(
-    `<i>${label} 卡組織結算匯率，僅供參考；實際請款金額依發卡行作業與帳單為準。</i>`
-  );
 
   return lines.join('\n');
 }
@@ -148,10 +124,9 @@ export function buildFeeRateReport(params: {
   expectedWithoutFee: number;
   actualCharged: number;
   effectiveFeePercent: number;
-  requestedDate: string;
   command: string;
 }): string {
-  const { from, to, spendAmount, expectedWithoutFee, actualCharged, effectiveFeePercent, requestedDate, command } = params;
+  const { from, to, spendAmount, expectedWithoutFee, actualCharged, effectiveFeePercent, command } = params;
 
   const lines: string[] = [];
   lines.push(`🔍 <b>FTF 手續費反推</b>`);
@@ -164,11 +139,6 @@ export function buildFeeRateReport(params: {
   lines.push('');
   lines.push('────────────────');
   lines.push(`<b>反推 FTF 手續費 ${effectiveFeePercent.toFixed(2)}%</b>`);
-  lines.push('');
-  lines.push(`📅 交易日期 <code>${escapeHtml(requestedDate)}</code>`);
-  lines.push(`🏦 ${currencyLabel(from)} → ${currencyLabel(to)}`);
-  lines.push('');
-  lines.push(`<i>註：此 FTF 為透過實際扣款反推之「有效匯率附加費用」，含銀行手續費、現金預借費等所有附加成本。</i>`);
 
   return lines.join('\n');
 }

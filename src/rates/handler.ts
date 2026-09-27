@@ -98,7 +98,6 @@ async function handleFeeRateCalculation(
     expectedWithoutFee,
     actualCharged,
     effectiveFeePercent: Math.max(0, effectiveFeePercent),
-    requestedDate: dateKey,
     command: buildCommandLine(command, {
       from,
       to,
@@ -137,7 +136,6 @@ async function handleQuery(
     quote,
     amount,
     feePercent,
-    requestedDate: dateKey,
     amountSpecified,
     command: buildCommandLine(command, {
       from,
