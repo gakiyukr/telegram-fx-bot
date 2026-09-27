@@ -14,14 +14,48 @@
  * 已驗證的兩項性質（用於與 Visa 採同一套換算策略）：
  *   1. conversionRate 與 transaction_amount 無關，故固定以 1 查詢單位匯率
  *   2. 帶入 bank_fee 後回傳的匯率恰為 baseRate * (1 + fee/100)
+ *
+ * 資料中心出口 IP（如 Vercel）會被 Akamai 連同 IP 信譽一併攔截，此時可透過
+ * 環境變數 MC_PROXY 讓查詢改走代理（僅影響本模組的連線路徑，TLS 指紋仍為 undici）：
+ *   MC_PROXY=socks5://[user:pass@]host:port
  */
 
+import { socksDispatcher } from 'fetch-socks';
+import { fetch as undiciFetch, type Dispatcher } from 'undici';
 import { RateError, type RateQuote } from './types.ts';
 
 const MC_ORIGIN = 'https://www.mastercard.com';
 const MC_API_BASE = `${MC_ORIGIN}/marketingservices/public/mccom-services/currency-conversions`;
 
 const REQUEST_TIMEOUT_MS = 12_000;
+
+/**
+ * 依 MC_PROXY 建立僅供本模組使用的連線 dispatcher。
+ * 僅支援 socks5:// 與 socks4://；格式錯誤時記錄警告並回退直連，
+ * 避免單一環境變數設定錯誤讓整個模組無法載入。
+ */
+function buildMcDispatcher(): Dispatcher | undefined {
+  const raw = process.env.MC_PROXY?.trim();
+  if (!raw) return undefined;
+  try {
+    const url = new URL(raw);
+    const auth = {
+      userId: url.username || undefined,
+      password: url.password || undefined,
+    };
+    return socksDispatcher({
+      type: url.protocol === 'socks4:' ? 4 : 5,
+      host: url.hostname,
+      port: Number(url.port) || 1080,
+      ...auth,
+    });
+  } catch (error) {
+    console.error('[mc] MC_PROXY 格式無效，已回退直連:', error instanceof Error ? error.message : error);
+    return undefined;
+  }
+}
+
+const mcDispatcher = buildMcDispatcher();
 
 type McConversionResponse = {
   data?: {
@@ -75,10 +109,11 @@ export async function fetchMastercardRate(params: {
   let status: number;
   let body: McConversionResponse;
   try {
-    const response = await fetch(`${MC_API_BASE}/conversion-rates?${query.toString()}`, {
+    const response = await undiciFetch(`${MC_API_BASE}/conversion-rates?${query.toString()}`, {
       method: 'GET',
       headers: buildHeaders(),
       signal: controller.signal,
+      ...(mcDispatcher ? { dispatcher: mcDispatcher } : {}),
     });
     status = response.status;
     const text = await response.text();
