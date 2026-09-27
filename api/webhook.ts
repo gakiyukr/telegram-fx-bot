@@ -10,7 +10,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { handleCommand, isSupportedCommand } from '../src/rates/handler.ts';
 import { parseCommandLine } from '../src/rates/args.ts';
-import { getMe, sendChatAction, sendMessage, type TelegramUpdate } from '../src/telegram.ts';
+import { getMe, sendChatAction, sendMessage, editMessageText, type TelegramUpdate } from '../src/telegram.ts';
 import { escapeHtml } from '../src/rates/format.ts';
 
 /** 允許使用的群組白名單；未設定時不限制 */
@@ -103,18 +103,48 @@ export default async function handler(
   try {
     await sendChatAction(token, message.chat.id);
 
-    const reply = await handleCommand(parsed.command, parsed.tokens);
+    // 先發佔位訊息：讓使用者確認 bot 已收到命令、仍在運作（活體訊號）
+    const echo = `/${parsed.command}${parsed.tokens.length ? ' ' + parsed.tokens.join(' ') : ''}`;
+    const pendingMessageId = await sendMessage(token, {
+      chatId: message.chat.id,
+      text:
+        `⏳ <b>正在處理</b> <code>${escapeHtml(echo)}</code>\n` +
+        `<i>查詢卡組織端點中，完成後本訊息將更新為結果。</i>`,
+      replyToMessageId: message.message_id,
+    });
 
-    if (reply) {
+    let reply: string | null;
+    try {
+      reply = await handleCommand(parsed.command, parsed.tokens);
+    } catch (error) {
+      console.error('[fx-bot] 處理命令失敗:', error);
+      reply = `❌ <b>處理失敗</b>\n\n${escapeHtml(String(error)).slice(0, 300)}`;
+    }
+
+    if (!reply) {
+      response.status(200).json({ ok: true });
+      return;
+    }
+
+    // 用最終結果編輯佔位訊息；編輯失敗時退回發送新訊息，確保結果可達
+    try {
+      await editMessageText(token, {
+        chatId: message.chat.id,
+        messageId: pendingMessageId,
+        text: reply,
+      });
+    } catch (error) {
+      console.error('[fx-bot] editMessageText 失敗，改發新訊息:', error);
       await sendMessage(token, {
         chatId: message.chat.id,
         text: reply,
         replyToMessageId: message.message_id,
       });
     }
+
     response.status(200).json({ ok: true });
   } catch (error) {
-    console.error('[fx-bot] 處理命令失敗:', error);
+    console.error('[fx-bot] 流程失敗:', error);
     // 回應尚未送出，仍有機會把錯誤回覆給使用者
     try {
       await sendMessage(token, {

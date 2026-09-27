@@ -23,11 +23,11 @@ export type SendMessageOptions = {
   replyToMessageId?: number;
 };
 
-/** 送出訊息（HTML parse mode） */
+/** 送出訊息（HTML parse mode），回傳 Telegram 指派的 message_id 供後續編輯 */
 export async function sendMessage(
   token: string,
   options: SendMessageOptions
-): Promise<void> {
+): Promise<number> {
   const response = await fetch(`${API_BASE}/bot${token}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -45,6 +45,34 @@ export async function sendMessage(
   if (!response.ok) {
     const body = await response.text();
     throw new Error(`Telegram sendMessage 失敗 (HTTP ${response.status}): ${body.slice(0, 200)}`);
+  }
+  const result = (await response.json()) as { result?: { message_id?: number } };
+  if (!result.result?.message_id) {
+    throw new Error('Telegram sendMessage 回應缺少 message_id');
+  }
+  return result.result.message_id;
+}
+
+/** 編輯已送出的訊息文字（HTML parse mode），用於把佔位訊息更新為最終結果 */
+export async function editMessageText(
+  token: string,
+  options: { chatId: number; messageId: number; text: string }
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/bot${token}/editMessageText`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: options.chatId,
+      message_id: options.messageId,
+      text: options.text,
+      parse_mode: 'HTML',
+      link_preview_options: { is_disabled: true },
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Telegram editMessageText 失敗 (HTTP ${response.status}): ${body.slice(0, 200)}`);
   }
 }
 
