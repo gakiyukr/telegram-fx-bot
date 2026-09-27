@@ -11,6 +11,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { handleCommand, isSupportedCommand } from '../src/rates/handler.ts';
 import { parseCommandLine } from '../src/rates/args.ts';
 import { getMe, sendChatAction, sendMessage, type TelegramUpdate } from '../src/telegram.ts';
+import { escapeHtml } from '../src/rates/format.ts';
 
 /** 允許使用的群組白名單；未設定時不限制 */
 function allowedChatIds(): Set<string> | null {
@@ -96,30 +97,34 @@ export default async function handler(
     return;
   }
 
-  // 先回應 Telegram 以免重送，實際處理在回應後繼續
-  response.status(200).json({ ok: true });
-
+  // 同步處理完畢後才回應：Vercel serverless 在回應送出後可能隨時終止
+  // function，「先回 200 再異步處理」的寫法會截斷查詢與回覆。
+  // maxDuration 30 秒足夠完成卡組織查詢與 sendMessage，Telegram 會等待回應。
   try {
     await sendChatAction(token, message.chat.id);
 
     const reply = await handleCommand(parsed.command, parsed.tokens);
-    if (!reply) return;
 
-    await sendMessage(token, {
-      chatId: message.chat.id,
-      text: reply,
-      replyToMessageId: message.message_id,
-    });
+    if (reply) {
+      await sendMessage(token, {
+        chatId: message.chat.id,
+        text: reply,
+        replyToMessageId: message.message_id,
+      });
+    }
+    response.status(200).json({ ok: true });
   } catch (error) {
     console.error('[fx-bot] 處理命令失敗:', error);
+    // 回應尚未送出，仍有機會把錯誤回覆給使用者
     try {
       await sendMessage(token, {
         chatId: message.chat.id,
-        text: `❌ <b>處理失敗</b>\n\n${String(error).slice(0, 200)}`,
+        text: `❌ <b>處理失敗</b>\n\n${escapeHtml(String(error)).slice(0, 200)}`,
         replyToMessageId: message.message_id,
       });
     } catch {
       // 回報失敗也失敗時，僅記錄不拋出
     }
+    response.status(200).json({ ok: true });
   }
 }
